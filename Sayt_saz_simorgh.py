@@ -137,8 +137,13 @@ class SiteBuilderBot:
                 return None
                 
             return result
+        except OSError as e:
+            print(f"send_document file I/O error for {file_path}: {e}")
+            self.send_message(chat_id, "❌ خطا در خواندن فایل. لطفاً دوباره تلاش کنید.")
+            return None
         except Exception as e:
-            print("send_document error:", e)
+            print(f"send_document error for chat {chat_id}: {e}")
+            self.send_message(chat_id, "❌ خطایی در ارسال فایل رخ داد. لطفاً دوباره تلاش کنید.")
             return None
 
     def get_updates(self, offset=None):
@@ -173,8 +178,12 @@ class SiteBuilderBot:
             try:
                 error_body = json.loads(e.read().decode("utf-8"))
                 return error_body
-            except:
-                return {"error": str(e)}
+            except (json.JSONDecodeError, UnicodeDecodeError, OSError) as parse_err:
+                print(f"Failed to parse Reseller API error response: {parse_err}")
+                return {"error": f"HTTP {e.code}: {e.reason}"}
+        except urllib.error.URLError as e:
+            print(f"Reseller API URL Error (network issue): {e.reason}")
+            return {"error": f"Network error: {e.reason}"}
         except Exception as e:
             print(f"Reseller API Exception: {e}")
             return {"error": str(e)}
@@ -215,8 +224,8 @@ class SiteBuilderBot:
             
             try:
                 ftp.cwd('/')
-            except:
-                pass
+            except ftplib.error_perm as e:
+                print(f"FTP: Could not change to root directory: {e}")
 
             for filename in os.listdir(local_folder_path):
                 filepath = os.path.join(local_folder_path, filename)
@@ -687,7 +696,8 @@ class SiteBuilderBot:
             g = int(color[3:5], 16)
             b = int(color[5:7], 16)
             color_rgb = f"{r}, {g}, {b}"
-        except:
+        except (ValueError, IndexError) as e:
+            print(f"Warning: Could not parse color '{color}', using default. Error: {e}")
             color_rgb = "0, 149, 255"
 
         css_template = """
@@ -860,6 +870,8 @@ footer a {{
         shutil.make_archive(zip_filename, 'zip', folder_path)
         
         final_zip_path = f"{zip_filename}.zip"
+        return final_zip_path
+
 def main():
     bot = SiteBuilderBot()
     offset = None
@@ -869,7 +881,17 @@ def main():
     while True:
         try:
             updates = bot.get_updates(offset)
-            if not updates or "result" not in updates:
+            if not updates:
+                print("Warning: get_updates returned None/empty response")
+                time.sleep(2)
+                continue
+            if "error" in updates:
+                print(f"Error from get_updates: {updates['error']}")
+                time.sleep(5)
+                continue
+            if "result" not in updates:
+                print(f"Unexpected response from get_updates (no 'result' key): {list(updates.keys())}")
+                time.sleep(2)
                 continue
             for update in updates["result"]:
                 offset = update["update_id"] + 1
@@ -882,8 +904,8 @@ def main():
                     data = cq.get("data", "")
                     try:
                         bot.api_request("answerCallbackQuery", {"callback_query_id": cq["id"]})
-                    except:
-                        pass
+                    except Exception as e:
+                        print(f"Warning: Failed to answer callback query {cq['id']}: {e}")
                     bot.handle_callback(chat_id, user_id, data)
                     continue
                 
@@ -896,6 +918,9 @@ def main():
                 user_id = msg["from"]["id"] if "from" in msg else chat_id
                 bot.handle_message(chat_id, user_id, msg)
                 
+        except urllib.error.URLError as e:
+            print(f"Main loop network error: {e.reason}")
+            time.sleep(10)
         except Exception as e:
             print(f"Main loop error: {e}")
             import traceback
