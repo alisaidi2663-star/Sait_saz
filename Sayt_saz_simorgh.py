@@ -12,18 +12,25 @@ import uuid
 import re
 import ftplib
 import time
+from urllib.parse import urlparse
 
-# غیرفعال کردن بررسی گواهی SSL
-ssl._create_default_https_context = ssl._create_unverified_context
+# --- تنظیمات SSL ---
+# هشدار: غیرفعال کردن بررسی SSL فقط در محیط توسعه مجاز است
+if os.environ.get("DISABLE_SSL_VERIFY", "").lower() == "true":
+    ssl._create_default_https_context = ssl._create_unverified_context
+    print("⚠️ هشدار: بررسی گواهی SSL غیرفعال است. فقط در محیط توسعه استفاده کنید.")
 
 # --- تنظیمات ربات باله ---
-BOT_TOKEN = "1314583370:BIY4It0mLyF46CoGzb2BQ8PghV-H4Jh8YrI"
+BOT_TOKEN = os.environ.get("BALE_BOT_TOKEN", "")
+if not BOT_TOKEN:
+    raise EnvironmentError("متغیر محیطی BALE_BOT_TOKEN تنظیم نشده است.")
 API_BASE = f"https://tapi.bale.ai/bot{BOT_TOKEN}"
 
 # --- تنظیمات API Reseller.World ---
-# ⚠️ مهم: کلید API خود را از پنل رسلر بگیرید و اینجا قرار دهید
-RESSELLER_API_KEY = "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsImtpZCI6IjM2NzNlOGY1LTU2M2EtNGE1OS05MWI3LTE4MDM4ZTliOWNjMiJ9.eyJhenAiOiJyZXNlbGxlci1hcGkiLCJvd25lcl9pZCI6MzY4OTM4LCJ1c2VyX2lkIjozNjcxNjcsImlhdCI6MTc3ODg2NzEzMywiZXhwIjoxODEwNDAzMTMzLCJqdGkiOiJjZTk0ZjcwYy1hNTVkLTRiNDEtYjYxMi0zY2NiYmViNTQ4YTkiLCJzaWQiOiJjZTk0ZjcwYy1hNTVkLTRiNDEtYjYxMi0zY2NiYmViNTQ4YTkiLCJ0eXAiOiJCZWFyZXIiLCJpc3MiOiJ1cm46aXJhbnNlcnZlcjphdXRoIiwic2NvcGUiOiJzZXJ2aWNlOnB1cmNoYXNlOmFwaSBzZXJ2aWNlOnJlbmV3OmFwaSBzZXJ2aWNlOmFjdGlvbnM6YXBpIHNlcnZpY2U6dmlldzphcGkifQ.g48ufQXwxsbrrDtQw8ycHehinoR9UgIPHD4PjgUOvm9fOnsFL1lmpqigmXponEFxcY3gVuIjaP-qbGz74cCuc7dukGNBe5b4xXUKzVjLR_MOgN-iyNHOA0IWq5-HgqN3-DBGBf2FErOl_OB-0F9ajyvKU-QK79UQT_w0HR8YDytgex4g8eiahiebWZ1w0UMU16l5NDaN8B9ADH4ePQ0dpsPH28DdNUjfag_G9shxGCW8STdaqoOT5E-aP7GjTGjdNO3qRrxl2IynT9Mnt61I3OTqDQHW52ePSDIJEV_qujEUpECDcPFeWEZjfqt5YZx41hwi_lVAn2GsXnodGfLAag" 
-RESSELLER_BASE_URL = "https://api.reseller.world/v1.5"
+RESSELLER_API_KEY = os.environ.get("RESELLER_API_KEY", "")
+if not RESSELLER_API_KEY:
+    print("⚠️ هشدار: متغیر محیطی RESELLER_API_KEY تنظیم نشده. قابلیت خرید دامنه/هاست کار نخواهد کرد.")
+RESSELLER_BASE_URL = os.environ.get("RESELLER_BASE_URL", "https://api.reseller.world/v1.5")
 
 # --- تنظیمات مسیر ذخیره‌سازی موقت ---
 HOME_DIR = os.path.expanduser("~")
@@ -418,13 +425,14 @@ class SiteBuilderBot:
 
         if step == "logo":
             if text.strip():
-                if "http" in text.lower():
-                    data["logo_url"] = text.strip()
+                url_candidate = text.strip()
+                if self._is_safe_url(url_candidate):
+                    data["logo_url"] = url_candidate
                     state["step"] = "contact"
                     kb = self.keyboard([[{"text": "⏭ رد کردن", "callback_data": "skip_contact"}]])
                     self.send_message(chat_id, "📞 شماره تلفن و ایمیل فروشگاه را ارسال کنید یا رد کردن را بزن:", kb)
                 else:
-                    self.send_message(chat_id, "⚠️ لطفاً یک لینک معتبر بفرستید.")
+                    self.send_message(chat_id, "⚠️ لطفاً یک لینک معتبر (http/https) بفرستید.")
             else:
                 self.send_message(chat_id, "لطفاً لینک را بفرستید یا رد کنید.")
             return
@@ -446,10 +454,12 @@ class SiteBuilderBot:
                 self.send_message(chat_id, "✅ دامنه ثبت نشد. اکنون پلن هاست خود را انتخاب کنید:\n1. اقتصادی\n2. استاندارد\n3. حرفه‌ای")
                 return
             
-            if "." in domain_input:
+            domain_pattern = re.compile(
+                r'^(?!-)[a-z0-9-]{1,63}(?<!-)(\.[a-z]{2,})+$'
+            )
+            if domain_pattern.match(domain_input):
                 data["domain"] = domain_input
                 self.send_message(chat_id, f"🔄 در حال بررسی موجودی دامنه {domain_input}...")
-                # اینجا می‌توانید از تابع check_domain_availability استفاده کنید
                 state["step"] = "hosting_plan"
                 self.send_message(chat_id, "✅ دامنه موجود است.\n\n💻 پلن هاست مورد نظر خود را انتخاب کنید:\n1. اقتصادی (۵۰۰ مگابایت)\n2. استاندارد (۱ گیگابایت)\n3. حرفه‌ای (۲ گیگابایت)")
             else:
@@ -564,12 +574,38 @@ class SiteBuilderBot:
             traceback.print_exc()
             self.send_message(chat_id, "❌ مشکلی در تولید یا ثبت سایت پیش آمد. لطفاً با ادمین تماس بگیرید.")
 
+    @staticmethod
+    def _is_safe_url(url):
+        """بررسی امنیت URL برای جلوگیری از SSRF"""
+        try:
+            parsed = urlparse(url)
+            if parsed.scheme not in ("http", "https"):
+                return False
+            hostname = parsed.hostname or ""
+            if not hostname:
+                return False
+            blocked = ("localhost", "127.0.0.1", "0.0.0.0", "::1", "169.254.")
+            for b in blocked:
+                if hostname.startswith(b) or hostname == b:
+                    return False
+            if hostname.endswith(".local") or hostname.endswith(".internal"):
+                return False
+            return True
+        except Exception:
+            return False
+
     def download_image_to_base64(self, url):
         try:
+            if not self._is_safe_url(url):
+                print(f"Blocked unsafe URL: {url}")
+                return None
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req, timeout=10) as response:
                 image_data = response.read()
             if len(image_data) < 1000:
+                return None
+            if len(image_data) > 5 * 1024 * 1024:
+                print(f"Image too large: {url}")
                 return None
             base64_string = base64.b64encode(image_data).decode('utf-8')
             mime_type = "image/jpeg" 
@@ -860,6 +896,7 @@ footer a {{
         shutil.make_archive(zip_filename, 'zip', folder_path)
         
         final_zip_path = f"{zip_filename}.zip"
+        return final_zip_path
 def main():
     bot = SiteBuilderBot()
     offset = None
