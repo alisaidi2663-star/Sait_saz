@@ -860,6 +860,8 @@ footer a {{
         shutil.make_archive(zip_filename, 'zip', folder_path)
         
         final_zip_path = f"{zip_filename}.zip"
+        return final_zip_path
+
 def main():
     bot = SiteBuilderBot()
     offset = None
